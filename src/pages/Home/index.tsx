@@ -18,6 +18,7 @@ import {
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import { Background } from "./Background";
 import { Popup } from "@/components/Popup";
+import * as Tone from 'tone';
 
 enum Stages {
   Introduction,
@@ -95,10 +96,19 @@ function getVariableExps(
   return expressions;
 }
 
+function hzToNote(frequency: number): string {
+  const noteIndex = 12 * Math.log2(frequency / 440) + 69;
+  const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+  const octave = Math.floor(noteIndex / 12) - 1;
+  const note = noteNames[Math.round(noteIndex) % 12];
+  return note + octave;
+}
+
 function nextBlocks(
   stage: Stages,
   blocks: HugeNum,
-  levels: Map<string, number>
+  levels: Map<string, number>,
+  synth: Tone.Synth | null
 ) {
   if (stage === Stages.Introduction) {
     return blocks;
@@ -107,6 +117,15 @@ function nextBlocks(
   const xLevel = levels.get("x") ?? 0;
   const x = xLevel > 0 ? 50 * xLevel : 1;
 
+  // Mantissa as float number: Number((blocks.mantissa / 1000000000000000n)) / 1000
+
+  // Trigger AR every new block
+  if (synth != null) {
+    try {
+      synth.triggerAttackRelease(hzToNote(Number((blocks.mantissa / 1000000000000000n)) / 10), '8n');
+    } catch (error) { }
+  }
+
   return blocks.add(HugeNum.fromInt(x));
 }
 
@@ -114,14 +133,32 @@ export function Home() {
   const [stage, setStage] = useState(Stages.Introduction);
   const [popupType, setPopupType] = useState("");
   const [levels, setLevels] = useState(new Map());
+  const [synth, setSynth] = useState<Tone.Synth | null>(null);
   const [blocks, updateBlocks] = useReducer(
     (
       blocks: HugeNum,
       { stage, levels }: { stage: Stages; levels: Map<string, number> }
-    ) => nextBlocks(stage, blocks, levels),
+    ) => nextBlocks(stage, blocks, levels, synth),
     HugeNum.ZERO
   );
   const [tick, setTick] = useState(false);
+
+  const initializeSynth = () => {
+    /**
+     * Initializes a new synth
+     */
+    const newSynth = new Tone.Synth({
+      oscillator: {
+        type: 'sine',
+      },
+    }).toDestination();
+
+    // Start the audio context
+    Tone.start();
+
+    // Set the new synth to the state
+    setSynth(newSynth);
+  };
 
   useEffect(() => {
     const interval = setInterval(() => setTick((t) => !t), 1000);
@@ -147,7 +184,7 @@ export function Home() {
 
   const onClose = useCallback(() => {
     if (popupType === "Introduction" && stage === Stages.Introduction) {
-        setStage(Stages.Adder);
+      setStage(Stages.Adder);
     }
     setPopupType("");
   }, [popupType, stage]);
@@ -197,6 +234,16 @@ export function Home() {
       ),
     [stage, blocks, levels, onPurchase]
   );
+
+  useEffect(() => {
+    /**
+     * Calls synth initialization
+     */
+    if (synth != null)
+      return;
+    initializeSynth();
+    console.log("Synth initialized")
+  }, []);
 
   return (
     <Flex minHeight="100vh" direction="column">
